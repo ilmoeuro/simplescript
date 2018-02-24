@@ -1,6 +1,4 @@
-module Lib
-    ( someFunc
-    ) where
+module Lib where
 
 import Data.Void
 import Text.Megaparsec
@@ -20,14 +18,14 @@ data Literal
 
 data Expression
     = ExTerm Term
-    | ExSum Term Term
-    | ExDiff Term Term
+    | ExSum Term Expression
+    | ExDiff Term Expression
     deriving (Show, Eq)
 
 data Term
     = TeFactor Factor
-    | TeProduct Factor Factor
-    | TeQuotient Factor Factor
+    | TeProduct Factor Term
+    | TeQuotient Factor Term
     deriving (Show, Eq)
 
 data Factor
@@ -123,15 +121,15 @@ block = MkBlock <$ symbol "{}"
 
 expression :: Parser Expression
 expression =
-        ExTerm <$> term
-    <|> ExSum <$> term <* symbol "+" <*> term
-    <|> ExDiff <$> term <* symbol "-" <*> term
+        try (ExSum <$> term <* symbol "+" <*> expression)
+    <|> try (ExDiff <$> term <* symbol "-" <*> expression)
+    <|> ExTerm <$> term
 
 term :: Parser Term
 term =
-        TeFactor <$> factor
-    <|> TeProduct <$> factor <* symbol "*" <*> factor
-    <|> TeQuotient <$> factor <* symbol "/" <*> factor
+        try (TeProduct <$> factor <* symbol "*" <*> term)
+    <|> try (TeQuotient <$> factor <* symbol "/" <*> term)
+    <|> TeFactor <$> factor
 
 factor :: Parser Factor
 factor =
@@ -140,11 +138,11 @@ factor =
 
 atom :: Parser Atom
 atom =
-        AtFunctionCall <$> functionCall
-    <|> AtFunction <$> function
-    <|> AtRecordAccess <$> recordAccess
-    <|> AtMethodCall <$> methodCall
-    <|> AtVariable <$> variable
+--        AtFunctionCall <$> functionCall
+--    <|> AtFunction <$> function
+--    <|> AtRecordAccess <$> recordAccess
+--    <|> AtMethodCall <$> methodCall
+    AtVariable <$> variable
     <|> AtList <$> list
     <|> AtRecord <$> record
     <|> AtLiteral <$> literal
