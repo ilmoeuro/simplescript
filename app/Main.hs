@@ -1,6 +1,7 @@
 module Main where
 
-import Lib
+import Control.Monad
+import SimpleScript.Parser
 
 main :: IO ()
-main = someFunc
+main = forever (getLine >>= (statement #))

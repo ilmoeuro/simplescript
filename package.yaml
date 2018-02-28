@@ -24,6 +24,7 @@ dependencies:
 - megaparsec
 - formatting
 - pretty-show
+- containers
 
 library:
   source-dirs: src
