@@ -25,6 +25,7 @@ dependencies:
 - formatting
 - pretty-show
 - containers
+- mtl
 - monad-loops
 
 library:

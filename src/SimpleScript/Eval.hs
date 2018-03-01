@@ -1,24 +1,34 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module SimpleScript.Eval where
 
 import Data.IORef
 import Data.Maybe
 import Data.List
 import Data.Foldable
-import Data.Function
 import Control.Monad
 import Control.Monad.Loops
+import Control.Monad.Reader
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
 import SimpleScript.Types
 
-type Action = IO
+newtype Action a = Action { unAction :: ReaderT (IORef Env) IO a }
+    deriving ( Functor
+             , Applicative
+             , Monad
+             , MonadIO
+             , MonadReader (IORef Env)
+             )
 
 newEnv :: IO (IORef Env)
 newEnv = newIORef $ Env Map.empty Nothing
+
+runAction :: Action a -> IO a
+runAction (Action a) = newEnv >>= runReaderT a
 
 liftNumeric :: (Double -> Double) -> Value -> Action Value
 liftNumeric f (NumericValue v) = pure $ NumericValue (f v)
@@ -72,89 +82,90 @@ unboundVars block@(Block stmts) = nub (concatMap vars stmts) \\\ declared where
 onVariables :: (Map String Value -> Map String Value) -> Env -> Env
 onVariables f e@Env{variables} = e { variables = f variables }
 
-setVariable :: IORef Env -> String -> Expression -> Action ()
-setVariable env name expr = do
-    val <- eval env expr
-    modifyIORef' env (onVariables (Map.insert name val))
+setVariable :: String -> Expression -> Action ()
+setVariable name expr = do
+    env <- ask
+    val <- eval expr
+    liftIO $ modifyIORef' env (onVariables (Map.insert name val))
 
-execute :: IORef Env -> Block -> Action ()
-execute env (Block stmts) = traverse_ exec stmts where
+execute :: Block -> Action ()
+execute (Block stmts) = traverse_ exec stmts where
     booleanValue (BooleanValue True)    = True
     booleanValue (BooleanValue False)   = False
     booleanValue _                      = error "non-boolean value"
-    exec (If expr block elseBlock) = eval env expr >>= \case
-        (BooleanValue True)     -> execute env block
-        (BooleanValue False)    -> maybe (pure ()) (execute env) elseBlock
+    exec (If expr block elseBlock) = eval expr >>= \case
+        (BooleanValue True)     -> execute block
+        (BooleanValue False)    -> maybe (pure ()) execute elseBlock
         _                       -> error "non-boolean condition for if"
-    exec (While expr block) = whileM_ (booleanValue <$> eval env expr)
-                                      (execute env block)
+    exec (While expr block) = whileM_ (booleanValue <$> eval expr)
+                                      (execute block)
     exec For{} = error "for loops are unimplemented"
-    exec (BlockStatement block) = execute env block
-    exec (ExpressionStatement expr) = void $ eval env expr
-    exec (Definition var (Just expr)) = setVariable env var expr
+    exec (BlockStatement block) = execute block
+    exec (ExpressionStatement expr) = void $ eval expr
+    exec (Definition var (Just expr)) = setVariable var expr
     exec (Definition _ _) = pure ()
-    exec (Assignment var [] expr) = setVariable env var expr
+    exec (Assignment var [] expr) = setVariable var expr
     exec (Assignment var [key] expr) = do
-        (RecordValue r) <- getVariable env var
-        val <- eval env expr
-        modifyIORef r (Map.insert key val)
+        (RecordValue r) <- getVariable var
+        val <- eval expr
+        liftIO $ modifyIORef r (Map.insert key val)
     exec Assignment{} = error "deep record assignment not implemented"
     exec Return{} = error "return not implemented"
 
-makeRecord :: IORef Env -> [(String, Expression)] -> Action Value
-makeRecord env pairExprs = do
-    pairs <- traverse (\(k, v) -> (k,) <$> eval env v) pairExprs
-    RecordValue <$> newIORef (Map.fromList pairs)
+makeRecord :: [(String, Expression)] -> Action Value
+makeRecord pairExprs = do
+    pairs <- traverse (\(k, v) -> (k,) <$> eval v) pairExprs
+    RecordValue <$> liftIO (newIORef (Map.fromList pairs))
 
-makeList :: IORef Env -> [Expression] -> Action Value
-makeList env elemExprs = do
-    elems <- traverse (eval env) elemExprs
-    ListValue <$> newIORef elems
+makeList :: [Expression] -> Action Value
+makeList elemExprs = do
+    elems <- traverse eval elemExprs
+    ListValue <$> liftIO (newIORef elems)
 
-makeFunction :: IORef Env -> [String] -> Block -> Action Value
-makeFunction _ _ _ = pure . FunctionValue . const $ pure NullValue
+makeFunction :: [String] -> Block -> Action Value
+makeFunction _ _ = pure . FunctionValue . const $ pure NullValue
 
-applyFunction :: IORef Env -> Expression -> [Expression] -> Action Value
-applyFunction env f args = do
-    args' <- traverse (eval env) args
-    (FunctionValue f') <- eval env f
-    f' args'
+applyFunction :: Expression -> [Expression] -> Action Value
+applyFunction f args = do
+    args' <- traverse eval args
+    (FunctionValue f') <- eval f
+    liftIO $ f' args'
 
-lookupRecord :: IORef Env -> Expression -> String -> Action Value
-lookupRecord env expr key = do
-    (RecordValue r) <- eval env expr
-    (Map.! key) <$> readIORef r
+lookupRecord :: Expression -> String -> Action Value
+lookupRecord expr key = do
+    (RecordValue r) <- eval expr
+    (Map.! key) <$> liftIO (readIORef r)
 
-getVariable :: IORef Env -> String -> Action Value
-getVariable envRef name = readIORef envRef >>= lookupVar name where
+getVariable :: String -> Action Value
+getVariable name = do
+        envRef <- ask
+        env <- liftIO $ readIORef envRef
+        lookupVar name env
+    where
     lookupVar var env = case (Map.lookup var (variables env), parent env) of
         (Just x, _)                 -> pure x
         (Nothing, Just p)           -> lookupVar var p
         _                           -> error $ "variable " ++ var ++ " not found"
 
-evalNumeric :: (Double -> Double -> Double)
-            -> IORef Env
-            -> Expression 
-            -> Expression
-            -> Action Value
-evalNumeric op env a b = do
-    av <- eval env a
-    bv <- eval env b
+evalNumeric :: (Double -> Double -> Double) -> Expression -> Expression -> Action Value
+evalNumeric op a b = do
+    av <- eval a
+    bv <- eval b
     liftNumeric2 op av bv
 
-eval :: IORef Env -> Expression -> Action Value
-eval _ NullLiteral              = pure NullValue
-eval _ TrueLiteral              = pure $ BooleanValue True
-eval _ FalseLiteral             = pure $ BooleanValue False
-eval _ (NumericLiteral val)     = pure $ NumericValue val
-eval _ (StringLiteral val)      = pure $ StringValue val
-eval e (Variable s)             = getVariable e s
-eval e (Negate val)             = eval e val >>= liftNumeric negate
-eval e (a :+ b)                 = evalNumeric (+) e a b
-eval e (a :- b)                 = evalNumeric (-) e a b
-eval e (a :* b)                 = evalNumeric (*) e a b
-eval e (a :/ b)                 = evalNumeric (/) e a b
-eval e (FunctionCall f args)    = applyFunction e f args
-eval e (Function args body)     = makeFunction e args body
-eval e (List elems)             = makeList e elems
-eval e (Record pairs)           = makeRecord e pairs
+eval :: Expression -> Action Value
+eval NullLiteral              = pure NullValue
+eval TrueLiteral              = pure $ BooleanValue True
+eval FalseLiteral             = pure $ BooleanValue False
+eval (NumericLiteral val)     = pure $ NumericValue val
+eval (StringLiteral val)      = pure $ StringValue val
+eval (Variable s)             = getVariable s
+eval (Negate val)             = eval val >>= liftNumeric negate
+eval (a :+ b)                 = evalNumeric (+) a b
+eval (a :- b)                 = evalNumeric (-) a b
+eval (a :* b)                 = evalNumeric (*) a b
+eval (a :/ b)                 = evalNumeric (/) a b
+eval (FunctionCall f args)    = applyFunction f args
+eval (Function args body)     = makeFunction args body
+eval (List elems)             = makeList elems
+eval (Record pairs)           = makeRecord pairs
