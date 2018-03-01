@@ -13,6 +13,8 @@ import Data.IORef
 
 data Expression
     = NullLiteral
+    | TrueLiteral
+    | FalseLiteral
     | StringLiteral String
     | NumericLiteral Double
     | Variable String
@@ -45,6 +47,7 @@ data Statement
 
 data Value
     = NullValue
+    | BooleanValue Bool
     | NumericValue Double
     | StringValue String
     | ListValue (IORef [Value])

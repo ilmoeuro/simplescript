@@ -25,6 +25,7 @@ dependencies:
 - formatting
 - pretty-show
 - containers
+- monad-loops
 
 library:
   source-dirs: src

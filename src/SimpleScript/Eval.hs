@@ -1,12 +1,18 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE LambdaCase #-}
 module SimpleScript.Eval where
 
 import Data.IORef
 import Data.Maybe
 import Data.List
+import Data.Foldable
+import Control.Monad
+import Control.Monad.Loops
 import qualified Data.Map.Strict as Map
 
 import SimpleScript.Types
+
+type Action = IO
 
 (\\\) :: Eq a => [a] -> [a] -> [a]
 a \\\ b = filter (not . (`elem` b)) a
@@ -45,27 +51,44 @@ unboundVars block@(Block stmts) = nub (concatMap vars stmts) \\\ declared where
     vars (Assignment expr1 expr2)   = allVars expr1 ++ allVars expr2
     vars (Return expr)              = allVars expr
 
-makeRecord :: IORef Env -> [(String, Expression)] -> IO Value
+execute :: IORef Env -> Block -> Action ()
+execute env (Block stmts) = traverse_ exec stmts where
+    booleanValue (BooleanValue True)    = True
+    booleanValue (BooleanValue False)   = False
+    booleanValue _                      = error "non-boolean value"
+    exec (If expr block elseBlock) = eval env expr >>= \case
+        (BooleanValue True)     -> execute env block
+        (BooleanValue False)    -> maybe (pure ()) (execute env) elseBlock
+        _                       -> error "non-boolean condition for if"
+    exec (While expr block) = whileM_ (booleanValue <$> eval env expr)
+                                      (execute env block)
+    exec For{} = error "for loops are unimplemented"
+    exec (BlockStatement block) = execute env block
+    exec (ExpressionStatement expr) = void $ eval env expr
+
+makeRecord :: IORef Env -> [(String, Expression)] -> Action Value
 makeRecord env pairExprs = do
     pairs <- traverse (\(k, v) -> (k,) <$> eval env v) pairExprs
     RecordValue <$> newIORef (Map.fromList pairs)
 
-makeList :: IORef Env -> [Expression] -> IO Value
+makeList :: IORef Env -> [Expression] -> Action Value
 makeList env elemExprs = do
     elems <- traverse (eval env) elemExprs
     ListValue <$> newIORef elems
 
-makeFunction :: IORef Env -> [String] -> Block -> IO Value
+makeFunction :: IORef Env -> [String] -> Block -> Action Value
 makeFunction _ _ _ = pure . FunctionValue . const $ pure NullValue
 
-applyFunction :: IORef Env -> Expression -> [Expression] -> IO Value
+applyFunction :: IORef Env -> Expression -> [Expression] -> Action Value
 applyFunction env f args = do
     args' <- traverse (eval env) args
     (FunctionValue f') <- eval env f
     f' args'
 
-eval :: IORef Env -> Expression -> IO Value
+eval :: IORef Env -> Expression -> Action Value
 eval _ NullLiteral              = pure NullValue
+eval _ TrueLiteral              = pure $ BooleanValue True
+eval _ FalseLiteral             = pure $ BooleanValue False
 eval _ (NumericLiteral val)     = pure $ NumericValue val
 eval _ (StringLiteral val)      = pure $ StringValue val
 eval e (Variable s)             = (Map.! s) . variables <$> readIORef e

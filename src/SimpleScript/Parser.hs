@@ -35,7 +35,16 @@ rword :: String -> Parser ()
 rword w = lexeme (string w *> notFollowedBy alphaNumChar)
 
 rws :: [String]
-rws = ["if", "else", "while", "for", "in", "let", "record", "null"]
+rws = [ "if"
+      , "else"
+      , "while"
+      , "for"
+      , "in"
+      , "let"
+      , "record"
+      , "null"
+      , "true"
+      , "false"]
 
 comma :: Parser String
 comma = symbol ","
@@ -101,7 +110,9 @@ term = choice
     , try (NumericLiteral <$> lexeme L.float)
     , NumericLiteral . fromInteger <$> lexeme L.decimal
     , try (FunctionCall <$> accessor <*> parens (expression `sepBy` comma))
-    , NullLiteral <$ rword "null"
+    , try $ NullLiteral <$ rword "null"
+    , try $ TrueLiteral <$ rword "true"
+    , try $ FalseLiteral <$ rword "false"
     , Variable <$> identifier
     ]
     <?> "term"
