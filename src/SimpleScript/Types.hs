@@ -4,8 +4,6 @@ module SimpleScript.Types
     , Statement (..)
     , Value (..)
     , Env (..)
-    , liftNumeric
-    , liftNumeric2
     ) where
 
 import Data.Map.Strict (Map)
@@ -23,8 +21,8 @@ data Expression
     | Expression :- Expression
     | Expression :* Expression
     | Expression :/ Expression
-    | Expression :. Expression
-    | Expression :.: Expression
+    | Expression :. String
+    | Expression :.: String
     | FunctionCall Expression [Expression]
     | Function [String] Block
     | List [Expression]
@@ -41,7 +39,7 @@ data Statement
     | BlockStatement Block
     | ExpressionStatement Expression
     | Definition String (Maybe Expression)
-    | Assignment Expression Expression
+    | Assignment String [String] Expression
     | Return Expression
     deriving (Show)
 
@@ -66,15 +64,4 @@ data Env = Env
     { variables :: Map String Value
     , parent :: Maybe Env
     }
-
-liftNumeric :: (Double -> Double) -> Value -> Value
-liftNumeric f (NumericValue v) = NumericValue (f v)
-liftNumeric _ v = error $ "Value " ++ show v ++ " is not numeric"
-
-liftNumeric2 :: (Double -> Double -> Double) -> Value -> Value -> Value
-liftNumeric2 f (NumericValue a) (NumericValue b) = NumericValue (f a b)
-liftNumeric2 _ v1 v2 = error $ "Values "
-                               ++ show v1
-                               ++ " and "
-                               ++ show v2
-                               ++ " are not numeric"
+    deriving (Show)

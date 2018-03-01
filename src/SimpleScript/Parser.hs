@@ -7,13 +7,13 @@ module SimpleScript.Parser
     ) where
 
 import Data.Void
+import Data.Functor
 import Text.Megaparsec hiding (parse)
 import qualified Text.Megaparsec as MP
 import Text.Megaparsec.Char
 import Text.Megaparsec.Expr
 import Text.Show.Pretty (pPrint)
 import qualified Text.Megaparsec.Char.Lexer as L
-
 
 import SimpleScript.Types
 
@@ -65,7 +65,7 @@ identifier :: Parser String
 identifier = (lexeme . try) (p >>= check) where
     p       = (:) <$> letterChar <*> many alphaNumChar
     check x = if x `elem` rws
-                then fail $ "keyword "
+                then fail $  "keyword "
                           ++ show x
                           ++ " cannot be an identifier"
                 else return x
@@ -73,15 +73,24 @@ identifier = (lexeme . try) (p >>= check) where
 block :: Parser Block
 block = Block <$> braces (many statement)
 
-accessorOperators :: [[Operator Parser Expression]]
-accessorOperators =
-    [ [ InfixL ((:.) <$ symbol ".")
-      , InfixL ((:.:) <$ symbol ":") ] ]
+recordAccess :: Parser (Expression -> Expression)
+recordAccess = flip (:.) <$> try (symbol "." *> identifier)
+
+bind :: Parser (Expression -> Expression)
+bind = flip (:.:) <$> try (symbol ":" *> identifier)
+
+functionCall :: Parser (Expression -> Expression)
+functionCall = flip FunctionCall <$> try (parens (expression `sepBy` comma))
+
+manyPostfixOp :: Parser (a -> a) -> Parser (a -> a)
+manyPostfixOp singleOp = foldr1 (flip (.)) <$> some singleOp
 
 operators :: [[Operator Parser Expression]]
 operators =
-    accessorOperators ++
-    [ [ Prefix (Negate <$ symbol "-")
+    [ [ Postfix (manyPostfixOp recordAccess) ]
+    , [ Postfix (manyPostfixOp bind) ]
+    , [ Postfix (manyPostfixOp functionCall) ]
+    , [ Prefix (Negate <$ symbol "-")
       , Prefix (id <$ symbol "+") ]
     , [ InfixR ((:*) <$ symbol "*")
       , InfixR ((:/) <$ symbol "/") ]
@@ -91,25 +100,27 @@ operators =
 expression :: Parser Expression
 expression = makeExprParser term operators <?> "expression"
 
-accessor :: Parser Expression
-accessor =
-    makeExprParser
-        (parens expression <|> Variable <$> identifier)
-        accessorOperators
-
 recordEntry :: Parser (String, Expression)
 recordEntry = (,) <$> identifier <* symbol "=" <*> expression
 
+quotedString :: Parser String
+quotedString
+        =   char '"'
+        *>  (many . choice)
+            [ noneOf "\\\""
+            , string "\\\"" $> '"'
+            , string "\\\\" $> '\\' ]
+        <*  char '"'
+
 term :: Parser Expression
 term = choice
-    [ try (Function <$> parens (identifier `sepBy` comma) <*> block)
+    [ try $ Function <$> parens (identifier `sepBy` comma) <*> block
     , List <$> brackets (expression `sepBy` comma)
-    , Record <$> (rword "record" *> braces (recordEntry `sepBy` comma))
+    , Record <$ rword "record" <*> braces (recordEntry `sepBy` comma)
     , parens expression
-    , StringLiteral <$> (char '"' *> many (noneOf "\"") <* char '"' <* sc)
-    , try (NumericLiteral <$> lexeme L.float)
+    , StringLiteral <$> quotedString <* sc
+    , try $ NumericLiteral <$> lexeme L.float
     , NumericLiteral . fromInteger <$> lexeme L.decimal
-    , try (FunctionCall <$> accessor <*> parens (expression `sepBy` comma))
     , try $ NullLiteral <$ rword "null"
     , try $ TrueLiteral <$ rword "true"
     , try $ FalseLiteral <$ rword "false"
@@ -148,7 +159,8 @@ statement = choice
         <*> optional (symbol "=" *> expression)
         <*  semi
     , Assignment
-        <$> expression
+        <$> identifier
+        <*> (identifier `sepBy` symbol ".")
         <*  symbol "="
         <*> expression
         <*  semi
