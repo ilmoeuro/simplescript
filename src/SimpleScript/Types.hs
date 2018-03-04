@@ -17,6 +17,9 @@ data Expression
     | NumericLiteral Double
     | Variable String
     | Negate Expression
+    | Expression :< Expression
+    | Expression :== Expression
+    | Expression :> Expression
     | Expression :+ Expression
     | Expression :- Expression
     | Expression :* Expression
@@ -53,12 +56,14 @@ data Value
     | FunctionValue ([Value] -> IO Value)
 
 instance Show Value where
-    show NullValue          = "null"
-    show (NumericValue x)   = show x
-    show (StringValue x)    = show x
-    show (ListValue _)      = "<list>"
-    show (RecordValue _)    = "<record>"
-    show (FunctionValue _)  = "<function>"
+    show NullValue              = "null"
+    show (NumericValue x)       = show x
+    show (StringValue x)        = show x
+    show (BooleanValue True)    = "true"
+    show (BooleanValue False)   = "false"
+    show (ListValue _)          = "<list>"
+    show (RecordValue _)        = "<record>"
+    show (FunctionValue _)      = "<function>"
 
 data Env = Env
     { variables :: Map String Value

@@ -6,9 +6,10 @@ module SimpleScript.Eval where
 
 import Data.IORef
 import Data.Maybe
+import Data.Monoid
 import Data.List
 import Data.Foldable
-import Control.Monad
+import Data.Functor
 import Control.Monad.Loops
 import Control.Monad.Reader
 import Data.Map.Strict (Map)
@@ -34,9 +35,13 @@ liftNumeric :: (Double -> Double) -> Value -> Action Value
 liftNumeric f (NumericValue v) = pure $ NumericValue (f v)
 liftNumeric _ v = error $ "Value " ++ show v ++ " is not numeric"
 
-liftNumeric2 :: (Double -> Double -> Double) -> Value -> Value -> Action Value
-liftNumeric2 f (NumericValue a) (NumericValue b) = pure $ NumericValue (f a b)
-liftNumeric2 _ v1 v2 = error $ "Values "
+liftNumeric2 :: (a -> Value)
+             -> (Double -> Double -> a)
+             -> Value
+             -> Value
+             -> Action Value
+liftNumeric2 toVal f (NumericValue a) (NumericValue b) = pure $ toVal (f a b)
+liftNumeric2 _ _ v1 v2 = error $  "Values "
                                ++ show v1
                                ++ " and "
                                ++ show v2
@@ -88,29 +93,47 @@ setVariable name expr = do
     val <- eval expr
     liftIO $ modifyIORef' env (onVariables (Map.insert name val))
 
-execute :: Block -> Action ()
-execute (Block stmts) = traverse_ exec stmts where
+showValue :: Value -> Action String
+showValue (ListValue ref) = do
+    vals <- liftIO $ readIORef ref
+    reprs <- traverse showValue vals
+    pure $ "[" <> intercalate "," reprs <> "]"
+showValue (RecordValue ref) = do
+    vals <- liftIO $ readIORef ref
+    pairs <- Map.toAscList <$> traverse showValue vals
+    let reprs = map (\(k,v) -> k <> "=" <> v) pairs
+    pure $ "record {" <> intercalate "," reprs <> "}"
+showValue v = pure $ show v
+
+testExecute :: Block -> IO (Maybe String)
+testExecute block = runAction (execute block >>= traverse showValue)
+
+-- TODO doesn't early exit with return, or from while loop
+execute :: Block -> Action (Maybe Value)
+execute (Block stmts) = asum <$> traverse exec stmts where
     booleanValue (BooleanValue True)    = True
     booleanValue (BooleanValue False)   = False
     booleanValue _                      = error "non-boolean value"
     exec (If expr block elseBlock) = eval expr >>= \case
         (BooleanValue True)     -> execute block
-        (BooleanValue False)    -> maybe (pure ()) execute elseBlock
+        (BooleanValue False)    -> maybe (pure Nothing) execute elseBlock
         _                       -> error "non-boolean condition for if"
-    exec (While expr block) = whileM_ (booleanValue <$> eval expr)
-                                      (execute block)
+    exec (While expr block) = asum <$> whileM (booleanValue <$> eval expr)
+                                              (execute block)
     exec For{} = error "for loops are unimplemented"
     exec (BlockStatement block) = execute block
-    exec (ExpressionStatement expr) = void $ eval expr
-    exec (Definition var (Just expr)) = setVariable var expr
-    exec (Definition _ _) = pure ()
-    exec (Assignment var [] expr) = setVariable var expr
+    exec (ExpressionStatement expr) = eval expr $> Nothing
+    exec (Definition var (Just expr)) = setVariable var expr $> Nothing
+    exec (Definition _ _) = pure Nothing
+    -- TODO don't assign to undeclared vars
+    exec (Assignment var [] expr) = setVariable var expr $> Nothing
     exec (Assignment var [key] expr) = do
         (RecordValue r) <- getVariable var
         val <- eval expr
         liftIO $ modifyIORef r (Map.insert key val)
+        pure Nothing
     exec Assignment{} = error "deep record assignment not implemented"
-    exec Return{} = error "return not implemented"
+    exec (Return val) = Just <$> eval val
 
 makeRecord :: [(String, Expression)] -> Action Value
 makeRecord pairExprs = do
@@ -147,11 +170,15 @@ getVariable name = do
         (Nothing, Just p)           -> lookupVar var p
         _                           -> error $ "variable " ++ var ++ " not found"
 
-evalNumeric :: (Double -> Double -> Double) -> Expression -> Expression -> Action Value
-evalNumeric op a b = do
+evalNumeric :: (a -> Value)
+            -> (Double -> Double -> a)
+            -> Expression
+            -> Expression
+            -> Action Value
+evalNumeric toVal op a b = do
     av <- eval a
     bv <- eval b
-    liftNumeric2 op av bv
+    liftNumeric2 toVal op av bv
 
 eval :: Expression -> Action Value
 eval NullLiteral              = pure NullValue
@@ -161,10 +188,15 @@ eval (NumericLiteral val)     = pure $ NumericValue val
 eval (StringLiteral val)      = pure $ StringValue val
 eval (Variable s)             = getVariable s
 eval (Negate val)             = eval val >>= liftNumeric negate
-eval (a :+ b)                 = evalNumeric (+) a b
-eval (a :- b)                 = evalNumeric (-) a b
-eval (a :* b)                 = evalNumeric (*) a b
-eval (a :/ b)                 = evalNumeric (/) a b
+eval (a :< b)                 = evalNumeric BooleanValue (<) a b
+eval (a :== b)                = evalNumeric BooleanValue (==) a b -- TODO strings
+eval (a :> b)                 = evalNumeric BooleanValue (>) a b
+eval (a :+ b)                 = evalNumeric NumericValue (+) a b
+eval (a :- b)                 = evalNumeric NumericValue (-) a b
+eval (a :* b)                 = evalNumeric NumericValue (*) a b
+eval (a :/ b)                 = evalNumeric NumericValue (/) a b
+eval (r :. k)                 = lookupRecord r k
+eval (_ :.: _)                = error "bind is undefined"
 eval (FunctionCall f args)    = applyFunction f args
 eval (Function args body)     = makeFunction args body
 eval (List elems)             = makeList elems

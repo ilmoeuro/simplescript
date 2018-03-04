@@ -95,7 +95,10 @@ operators =
     , [ InfixR ((:*) <$ symbol "*")
       , InfixR ((:/) <$ symbol "/") ]
     , [ InfixR ((:+) <$ symbol "+")
-      , InfixR ((:-) <$ symbol "-") ] ]
+      , InfixR ((:-) <$ symbol "-") ]
+    , [ InfixR ((:<) <$ symbol "<")
+      , InfixR ((:==) <$ symbol "==")
+      , InfixR ((:>) <$ symbol ">") ] ]
 
 expression :: Parser Expression
 expression = makeExprParser term operators <?> "expression"
@@ -129,7 +132,7 @@ term = choice
     <?> "term"
 
 statement :: Parser Statement
-statement = choice
+statement = (choice . map try)
     [ If
         <$  rword "if"
         <*> parens expression
@@ -152,17 +155,17 @@ statement = choice
         <*> expression
         <*  semi
     , BlockStatement <$> block
-    , try (ExpressionStatement <$> expression <* semi)
-    , Definition
-        <$  rword "let"
-        <*> identifier
-        <*> optional (symbol "=" *> expression)
-        <*  semi
     , Assignment
         <$> identifier
         <*> (identifier `sepBy` symbol ".")
         <*  symbol "="
         <*> expression
+        <*  semi
+    , ExpressionStatement <$> expression <* semi
+    , Definition
+        <$  rword "let"
+        <*> identifier
+        <*> optional (symbol "=" *> expression)
         <*  semi
     ]
     <?> "statement"
