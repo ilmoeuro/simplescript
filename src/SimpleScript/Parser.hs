@@ -15,7 +15,7 @@ import Text.Megaparsec.Expr
 import Text.Show.Pretty (pPrint)
 import qualified Text.Megaparsec.Char.Lexer as L
 
-import SimpleScript.Types
+import SimpleScript.AST
 
 type Parser = Parsec Void String
 
@@ -87,9 +87,7 @@ manyPostfixOp singleOp = foldr1 (flip (.)) <$> some singleOp
 
 operators :: [[Operator Parser Expression]]
 operators =
-    [ [ Postfix (manyPostfixOp recordAccess) ]
-    , [ Postfix (manyPostfixOp bind) ]
-    , [ Postfix (manyPostfixOp functionCall) ]
+    [ [ Postfix . manyPostfixOp $ recordAccess <|> bind <|> functionCall ]
     , [ Prefix (Negate <$ symbol "-")
       , Prefix (id <$ symbol "+") ]
     , [ InfixR ((:*) <$ symbol "*")
@@ -157,7 +155,7 @@ statement = (choice . map try)
     , BlockStatement <$> block
     , Assignment
         <$> identifier
-        <*> (identifier `sepBy` symbol ".")
+        <*> many (symbol "." *> identifier)
         <*  symbol "="
         <*> expression
         <*  semi
