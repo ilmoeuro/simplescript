@@ -88,15 +88,17 @@ manyPostfixOp singleOp = foldr1 (flip (.)) <$> some singleOp
 operators :: [[Operator Parser Expression]]
 operators =
     [ [ Postfix . manyPostfixOp $ recordAccess <|> bind <|> functionCall ]
-    , [ Prefix (Negate <$ symbol "-")
-      , Prefix (id <$ symbol "+") ]
-    , [ InfixR ((:*) <$ symbol "*")
-      , InfixR ((:/) <$ symbol "/") ]
-    , [ InfixR ((:+) <$ symbol "+")
-      , InfixR ((:-) <$ symbol "-") ]
-    , [ InfixR ((:<) <$ symbol "<")
-      , InfixR ((:==) <$ symbol "==")
-      , InfixR ((:>) <$ symbol ">") ] ]
+    , [ Prefix $ Negate <$ symbol "-"
+      , Prefix $ id <$ symbol "+" ]
+    , [ InfixR $ (:*) <$ symbol "*"
+      , InfixR $ (:/) <$ symbol "/" ]
+    , [ InfixR $ (:+) <$ symbol "+"
+      , InfixR $ (:-) <$ symbol "-" ]
+    , [ InfixR . try $ (:<=) <$ symbol "<="
+      , InfixR . try $ (:==) <$ symbol "=="
+      , InfixR . try $ (:>=) <$ symbol ">="
+      , InfixR $ (:<) <$ symbol "<"
+      , InfixR $ (:>) <$ symbol ">" ] ]
 
 expression :: Parser Expression
 expression = makeExprParser term operators <?> "expression"
@@ -117,7 +119,7 @@ term :: Parser Expression
 term = choice
     [ try $ Function <$> parens (identifier `sepBy` comma) <*> block
     , List <$> brackets (expression `sepBy` comma)
-    , Record <$ rword "record" <*> braces (recordEntry `sepBy` comma)
+    , try $ Record <$ rword "record" <*> braces (recordEntry `sepBy` comma)
     , parens expression
     , StringLiteral <$> quotedString <* sc
     , try $ NumericLiteral <$> lexeme L.float

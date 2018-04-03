@@ -14,6 +14,9 @@ import Control.Monad.Loops
 import Control.Monad.Reader
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Control.Lens (set, ix, lens, Lens')
 
 import SimpleScript.AST
 
@@ -36,11 +39,15 @@ instance Show Value where
     show (RecordValue _)        = "<record>"
     show (FunctionValue _)      = "<function>"
 
-data Env = Env
-    { variables :: Map String Value
-    , parent :: Maybe Env
-    }
-    deriving (Show)
+newtype Scope = MkScope { vars :: Map String Value } deriving (Show)
+
+vars' :: Lens' Scope (Map String Value)
+vars' = lens vars (\s v -> s {vars = v})
+
+newtype Env = Env { scopes :: [Scope] } deriving (Show)
+
+scopes' :: Lens' Env [Scope]
+scopes' = lens scopes (\e s -> e {scopes=s})
 
 newtype Action a = Action { unAction :: ReaderT (IORef Env) IO a }
     deriving ( Functor
@@ -51,63 +58,54 @@ newtype Action a = Action { unAction :: ReaderT (IORef Env) IO a }
              )
 
 newEnv :: IO (IORef Env)
-newEnv = newIORef $ Env Map.empty Nothing
+newEnv = newIORef $ Env []
 
 runAction :: Action a -> IO a
 runAction (Action a) = newEnv >>= runReaderT a
 
-liftNumeric :: (Double -> Double) -> Value -> Action Value
-liftNumeric f (NumericValue v) = pure $ NumericValue (f v)
-liftNumeric _ v = error $ "Value " ++ show v ++ " is not numeric"
-
-liftNumeric2 :: (a -> Value)
-             -> (Double -> Double -> a)
-             -> Value
-             -> Value
-             -> Action Value
-liftNumeric2 toVal f (NumericValue a) (NumericValue b) = pure $ toVal (f a b)
-liftNumeric2 _ _ v1 v2 = error $  "Values "
-                               ++ show v1
-                               ++ " and "
-                               ++ show v2
-                               ++ " are not numeric"
-
-(\\\) :: Eq a => [a] -> [a] -> [a]
-a \\\ b = filter (not . (`elem` b)) a
-
-allVars :: Expression -> [String]
-allVars (Variable s)            = [s]
+allVars :: Expression -> Set String
+allVars (Variable s)            = Set.singleton s
 allVars (Negate expr)           = allVars expr
-allVars (a :+ b)                = allVars a ++ allVars b
-allVars (a :- b)                = allVars a ++ allVars b
-allVars (a :* b)                = allVars a ++ allVars b
-allVars (a :/ b)                = allVars a ++ allVars b
+allVars (a :+ b)                = allVars a <> allVars b
+allVars (a :- b)                = allVars a <> allVars b
+allVars (a :* b)                = allVars a <> allVars b
+allVars (a :/ b)                = allVars a <> allVars b
 allVars (a :. _)                = allVars a
 allVars (a :.: _)               = allVars a
-allVars (Function args body)    = unboundVars body \\\ args
-allVars (FunctionCall f args)   = allVars f ++ concatMap allVars args
-allVars (List elems)            = concatMap allVars elems
-allVars (Record pairs)          = concatMap (allVars . snd) pairs
-allVars _                       = []
+allVars (Function args body)    = unboundVars body Set.\\ Set.fromList args
+allVars (FunctionCall f args)   = allVars f <> foldMap allVars args
+allVars (List elems)            = foldMap allVars elems
+allVars (Record pairs)          = foldMap (allVars . snd) pairs
+allVars _                       = Set.empty
 
-declaredVars :: Block -> [String]
-declaredVars (Block stmts) = mapMaybe vars stmts where
-    vars (Definition s _) = Just s
-    vars _                = Nothing
+declaredVars :: Block -> Set String
+declaredVars (Block stmts) = foldMap vars stmts where
+    vars (Definition s _) = Set.singleton s
+    vars _                = Set.empty
 
-unboundVars :: Block -> [String]
-unboundVars block@(Block stmts) = nub (concatMap vars stmts) \\\ declared where
+unboundVars :: Block -> Set String
+unboundVars block@(Block stmts) = foldMap vars stmts Set.\\ declared where
     declared = declaredVars block
-    vars (If expr block1 (Just block2)) = allVars expr ++ unboundVars block1 ++ unboundVars block2
-    vars (If expr block' Nothing)   = allVars expr ++ unboundVars block'
-    vars (While expr block')        = allVars expr ++ unboundVars block'
-    vars (For var expr block')      = (allVars expr ++ unboundVars block') \\\ [var]
+    vars (If expr block1 (Just block2)) = allVars expr <> unboundVars block1 <> unboundVars block2
+    vars (If expr block' Nothing)   = allVars expr <> unboundVars block'
+    vars (While expr block')        = allVars expr <> unboundVars block'
+    vars (For var expr block')      = (allVars expr <> unboundVars block') Set.\\ Set.singleton var
     vars (BlockStatement block')    = unboundVars block'
     vars (ExpressionStatement expr) = allVars expr
     vars (Definition _ (Just expr)) = allVars expr
-    vars (Definition _ Nothing)     = []
-    vars (Assignment var _ expr)    = var : allVars expr
+    vars (Definition _ Nothing)     = Set.empty
+    vars (Assignment var _ expr)    = Set.singleton var <> allVars expr
     vars (Return expr)              = allVars expr
+
+setVariable :: String -> Value -> Action ()
+setVariable name val = do
+    envRef <- ask
+    let modify env = 
+    liftIO $ modifyIORef' envRef _foo
+
+
+
+{-
 
 onVariables :: (Map String Value -> Map String Value) -> Env -> Env
 onVariables f e@Env{variables} = e { variables = f variables }
@@ -232,3 +230,5 @@ evaluate (FunctionCall f args)  = applyFunction f args
 evaluate (Function args body)   = makeFunction args body
 evaluate (List elems)           = makeList elems
 evaluate (Record pairs)         = makeRecord pairs
+
+-}

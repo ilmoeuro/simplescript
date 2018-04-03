@@ -27,6 +27,7 @@ dependencies:
 - containers
 - mtl
 - monad-loops
+- lens
 
 library:
   source-dirs: src

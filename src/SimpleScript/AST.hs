@@ -13,7 +13,9 @@ data Expression
     | Variable String
     | Negate Expression
     | Expression :< Expression
+    | Expression :<= Expression
     | Expression :== Expression
+    | Expression :>= Expression
     | Expression :> Expression
     | Expression :+ Expression
     | Expression :- Expression
