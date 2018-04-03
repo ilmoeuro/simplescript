@@ -63,6 +63,8 @@ newEnv = newIORef $ Env []
 runAction :: Action a -> IO a
 runAction (Action a) = newEnv >>= runReaderT a
 
+-- STUFF HERE
+
 allVars :: Expression -> Set String
 allVars (Variable s)            = Set.singleton s
 allVars (Negate expr)           = allVars expr
