@@ -1,6 +1,7 @@
 module SimpleScript.Parser
     ( expression
     , statement
+    , sourceFile
     , block
     , parse
     , (#)
@@ -8,6 +9,7 @@ module SimpleScript.Parser
 
 import Data.Void
 import Data.Functor
+import Control.Monad
 import Text.Megaparsec hiding (parse)
 import qualified Text.Megaparsec as MP
 import Text.Megaparsec.Char
@@ -18,6 +20,10 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import SimpleScript.AST
 
 type Parser = Parsec Void String
+
+normalizeMaybe :: Maybe [a] -> [a]
+normalizeMaybe (Just x) = x
+normalizeMaybe Nothing = []
 
 sc :: Parser ()
 sc = L.space space1 lineComment blockComment
@@ -44,7 +50,9 @@ rws = [ "if"
       , "record"
       , "null"
       , "true"
-      , "false"]
+      , "false"
+      , "export"
+      , "import"]
 
 comma :: Parser String
 comma = symbol ","
@@ -70,8 +78,17 @@ identifier = (lexeme . try) (p >>= check) where
                           ++ " cannot be an identifier"
                 else return x
 
+statements :: Parser [Statement]
+statements = join <$> many numberedStatement
+
+numberedStatement :: Parser [Statement]
+numberedStatement = sequence
+    [ LineNumber . unPos . sourceLine <$> getPosition
+    , statement
+    ]
+
 block :: Parser Block
-block = Block <$> braces (many statement)
+block = Block <$> braces statements
 
 recordAccess :: Parser (Expression -> Expression)
 recordAccess = flip (:.) <$> try (symbol "." *> identifier)
@@ -131,13 +148,21 @@ term = choice
     ]
     <?> "term"
 
-statement :: Parser Statement
-statement = (choice . map try)
-    [ If
+blockOrIf :: Parser Block
+blockOrIf =   block
+          <|> (Block . (:[])) <$> ifStatement
+
+ifStatement :: Parser Statement
+ifStatement =
+    If
         <$  rword "if"
         <*> parens expression
         <*> block
-        <*> optional (rword "else" *> block)
+        <*> optional (rword "else" *> blockOrIf)
+
+statement :: Parser Statement
+statement = (choice . map try)
+    [ ifStatement
     , While
         <$  rword "while"
         <*> parens expression
@@ -150,25 +175,38 @@ statement = (choice . map try)
         <*> expression
         <*  symbol ")"
         <*> block
-    , Return
-        <$  rword "return"
-        <*> expression
-        <*  semi
     , BlockStatement <$> block
-    , Assignment
-        <$> identifier
-        <*> many (symbol "." *> identifier)
-        <*  symbol "="
-        <*> expression
-        <*  semi
     , ExpressionStatement <$> expression <* semi
     , Definition
         <$  rword "let"
         <*> identifier
         <*> optional (symbol "=" *> expression)
         <*  semi
+    , Assignment
+        <$> identifier
+        <*> many (symbol "." *> identifier)
+        <*  symbol "="
+        <*> expression
+        <*  semi
+    , Return
+        <$  rword "return"
+        <*> expression
+        <*  semi
+    , Export
+        <$  rword "export"
+        <*> identifier
+        <*  symbol "="
+        <*> expression
+        <*  semi
+    , Import
+        <$  rword "import"
+        <*> identifier
+        <*> (normalizeMaybe <$> optional (braces (identifier `sepEndBy` comma)))
     ]
     <?> "statement"
+
+sourceFile :: Parser [Statement]
+sourceFile = statements
 
 parse :: Parser a -> String -> a
 parse parser input =

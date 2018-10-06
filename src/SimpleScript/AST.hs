@@ -1,3 +1,4 @@
+{-# LANGUAGE Strict #-}
 module SimpleScript.AST
     ( Expression (..)
     , Block (..)
@@ -41,4 +42,7 @@ data Statement
     | Definition String (Maybe Expression)
     | Assignment String [String] Expression
     | Return Expression
+    | Export String Expression
+    | Import String [String]
+    | LineNumber Int
     deriving (Show)

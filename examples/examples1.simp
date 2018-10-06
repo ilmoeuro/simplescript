@@ -1,0 +1,62 @@
+import std {
+    print,
+    input,
+    range,
+    toNumber
+}
+
+export the99bottles = () {
+    let i = 99;
+    while (i > 0) {
+        print(i);
+        print(" bottles of beer on the wall\n");
+        print(i);
+        print(" bottles of beer\n");
+        print("Take one down, pass it around");
+        i = i - 1;
+        print(i);
+        print(" bottles of beer on the wall\n");
+    }
+};
+
+export hangman = () {
+    print("enter the word to guess:");
+    let word = input();
+    print("enter maximum number of guesses");
+    let maxGuesses = toNumber(input());
+    for (i in range(100)) {
+        print("");
+    }
+    let guess = "";
+    for (i in range(word.length())) {
+        guess = guess.append("_");
+    }
+    let numGuesses = 0;
+    while (numGuesses < maxGuesses) {
+        print("enter letter:");
+        let letter = input();
+        for (i in range(word.length())) {
+            if (word.get(i) == letter) {
+                guess = guess.replace(i, 1, letter);
+            }
+        }
+        numGuesses = numGuesses + 1;
+
+        if (guess == word) {
+            print("you won!");
+            return null;
+        }
+    }
+
+    print("you lost.");
+};
+
+export fibonacci = (num) {
+    if (num <= 0) {
+        return 0;
+    } else if (num == 1) {
+        return 1;
+    } else {
+        return fibonacci(num - 1) + fibonacci(num - 2);
+    }
+};

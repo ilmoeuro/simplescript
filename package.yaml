@@ -28,6 +28,8 @@ dependencies:
 - mtl
 - monad-loops
 - lens
+- language-c
+- inline-c
 
 library:
   source-dirs: src
